@@ -1,34 +1,26 @@
 
 import streamlit as st
 import pandas as pd
-import joblib
+import pickle
 from pathlib import Path
 
-# ==========================================
-# 1. KONFIGURASI APLIKASI
-# ==========================================
-
+# Pengaturan halaman
 st.set_page_config(
     page_title="Prediksi Kemampuan Membeli Mobil",
     page_icon="🚗",
     layout="wide"
 )
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).parent
 
-# ==========================================
-# 2. LOAD MODEL DAN KATALOG MOBIL
-# ==========================================
-
+# Memuat model dan katalog
 @st.cache_resource
 def load_models():
-    regression_model = joblib.load(
-        BASE_DIR / "regression_model.pkl"
-    )
+    with open(BASE_DIR / "regression_model.pkl", "rb") as file:
+        regression_model = pickle.load(file)
 
-    classification_model = joblib.load(
-        BASE_DIR / "classification_model.pkl"
-    )
+    with open(BASE_DIR / "classification_model.pkl", "rb") as file:
+        classification_model = pickle.load(file)
 
     return regression_model, classification_model
 
@@ -44,246 +36,146 @@ try:
 
 except Exception as e:
     st.error("Gagal memuat model atau katalog mobil.")
-    st.code(str(e))
+    st.exception(e)
     st.stop()
 
 
-# ==========================================
-# 3. JUDUL APLIKASI
-# ==========================================
-
+# Judul aplikasi
 st.title("🚗 Prediksi Kemampuan Membeli Mobil")
-
 st.write(
-    """
-    Aplikasi ini digunakan untuk memperkirakan cicilan bulanan
-    dan memprediksi kemampuan seseorang dalam membeli mobil
-    berdasarkan penghasilan, harga mobil, uang muka, dan tenor.
-    """
+    "Aplikasi ini membantu memperkirakan cicilan mobil "
+    "dan menilai kemampuan pengguna berdasarkan penghasilan bulanan."
 )
-
-st.info(
-    "Hasil kelayakan merupakan simulasi berdasarkan "
-    "batas Debt-to-Income Ratio (DTI) sebesar 35%, "
-    "bukan keputusan resmi bank atau leasing."
-)
-
-
-# ==========================================
-# 4. INPUT DATA PEMBELI
-# ==========================================
-
-st.sidebar.header("Data Calon Pembeli")
-
-monthly_income = st.sidebar.number_input(
-    "Penghasilan Bulanan (Rp)",
-    min_value=1,
-    max_value=1_000_000_000,
-    value=8_000_000,
-    step=500_000
-)
-
-
-# ==========================================
-# 5. PILIHAN MOBIL
-# ==========================================
-
-st.sidebar.header("Pilihan Mobil")
-
-required_columns = [
-    "company",
-    "model",
-    "body_style",
-    "price_idr"
-]
-
-if not all(col in catalog.columns for col in required_columns):
-    st.error("Kolom katalog mobil tidak sesuai.")
-    st.stop()
-
-catalog = catalog.dropna(
-    subset=["company", "model", "price_idr"]
-).copy()
-
-catalog["label"] = (
-    catalog["company"].astype(str)
-    + " - "
-    + catalog["model"].astype(str)
-)
-
-selected_car = st.sidebar.selectbox(
-    "Pilih Mobil",
-    catalog["label"].tolist()
-)
-
-car = catalog[
-    catalog["label"] == selected_car
-].iloc[0]
-
-price_idr = int(car["price_idr"])
-
-st.sidebar.write(
-    f"Harga Mobil: Rp{price_idr:,.0f}"
-)
-
-st.sidebar.write(
-    f"Jenis Bodi: {car['body_style']}"
-)
-
-
-# ==========================================
-# 6. INPUT UANG MUKA (DP)
-# ==========================================
-
-dp_percent = st.sidebar.slider(
-    "Persentase Uang Muka (DP)",
-    min_value=10,
-    max_value=80,
-    value=30,
-    step=1
-)
-
-down_payment = int(
-    price_idr * dp_percent / 100
-)
-
-st.sidebar.write(
-    f"Nominal DP: Rp{down_payment:,.0f}"
-)
-
-
-# ==========================================
-# 7. INPUT TENOR
-# ==========================================
-
-loan_tenure = st.sidebar.selectbox(
-    "Tenor Cicilan",
-    [12, 24, 36, 48, 60],
-    index=2,
-    format_func=lambda x: f"{x} Bulan"
-)
-
-
-# ==========================================
-# 8. PROSES PREDIKSI
-# ==========================================
-
-if st.sidebar.button(
-    "Prediksi Kemampuan Membeli Mobil",
-    use_container_width=True
-):
-
-    # Input regresi
-    X_reg_input = pd.DataFrame([{
-        "price_idr": price_idr,
-        "down_payment": down_payment,
-        "loan_tenure": loan_tenure
-    }])
-
-    # Prediksi cicilan bulanan
-    installment = float(
-        regression_model.predict(X_reg_input)[0]
-    )
-
-    # Input klasifikasi
-    X_clf_input = pd.DataFrame([{
-        "monthly_income": monthly_income,
-        "price_idr": price_idr,
-        "down_payment": down_payment,
-        "loan_tenure": loan_tenure
-    }])
-
-    # Prediksi kelayakan
-    status = int(
-        classification_model.predict(X_clf_input)[0]
-    )
-
-    # Menghitung DTI
-    dti = (
-        installment / monthly_income
-    ) * 100
-
-
-    # ======================================
-    # 9. MENAMPILKAN HASIL
-    # ======================================
-
-    st.divider()
-
-    st.subheader("📊 Hasil Prediksi")
-
-    col1, col2, col3 = st.columns(3)
-
-    col1.metric(
-        "Harga Mobil",
-        f"Rp{price_idr:,.0f}"
-    )
-
-    col2.metric(
-        "Uang Muka",
-        f"Rp{down_payment:,.0f}"
-    )
-
-    col3.metric(
-        "Tenor",
-        f"{loan_tenure} Bulan"
-    )
-
-    st.divider()
-
-    col4, col5 = st.columns(2)
-
-    col4.metric(
-        "Estimasi Cicilan Bulanan",
-        f"Rp{installment:,.0f}"
-    )
-
-    col5.metric(
-        "Rasio Cicilan terhadap Gaji",
-        f"{dti:.2f}%"
-    )
-
-    st.divider()
-
-    st.subheader("Hasil Klasifikasi")
-
-    if status == 1:
-        st.success(
-            "LAYAK berdasarkan prediksi model."
-        )
-    else:
-        st.error(
-            "TIDAK LAYAK berdasarkan prediksi model."
-        )
-
-    st.subheader("Analisis Kemampuan Membayar")
-
-    if dti <= 35:
-        st.success(
-            f"DTI sebesar {dti:.2f}% berada "
-            "pada atau di bawah batas simulasi 35%."
-        )
-    else:
-        st.warning(
-            f"DTI sebesar {dti:.2f}% melebihi "
-            "batas simulasi 35%."
-        )
-
-    st.caption(
-        "Hasil merupakan simulasi berdasarkan model "
-        "dan asumsi DTI 35%, bukan keputusan resmi leasing. "
-        "Prediksi regresi dan klasifikasi merupakan dua "
-        "model terpisah sehingga hasilnya dapat berbeda."
-    )
-
-
-# ==========================================
-# 10. FOOTER
-# ==========================================
 
 st.divider()
 
-st.caption(
-    "Prediksi Kemampuan Membeli Mobil | "
-    "Machine Learning dengan Python dan Streamlit"
+# Input pengguna
+st.subheader("Masukkan Data Keuangan")
+
+monthly_income = st.number_input(
+    "Penghasilan per Bulan (Rp)",
+    min_value=1_000_000,
+    value=5_000_000,
+    step=500_000
 )
+
+st.subheader("Pilih Mobil")
+
+companies = sorted(catalog["company"].dropna().unique())
+
+selected_company = st.selectbox(
+    "Merek Mobil",
+    companies
+)
+
+models = sorted(
+    catalog.loc[
+        catalog["company"] == selected_company,
+        "model"
+    ].dropna().unique()
+)
+
+selected_model = st.selectbox(
+    "Model Mobil",
+    models
+)
+
+selected_car = catalog[
+    (catalog["company"] == selected_company) &
+    (catalog["model"] == selected_model)
+]
+
+car_price = float(selected_car.iloc[0]["price_idr"])
+
+st.metric(
+    "Harga Mobil",
+    f"Rp {car_price:,.0f}"
+)
+
+dp_percent = st.slider(
+    "Persentase Uang Muka (%)",
+    min_value=10,
+    max_value=80,
+    value=30
+)
+
+down_payment = car_price * dp_percent / 100
+
+st.write(f"Uang muka: **Rp {down_payment:,.0f}**")
+
+loan_tenure = st.selectbox(
+    "Lama Kredit",
+    [12, 24, 36, 48, 60],
+    index=2,
+    format_func=lambda x: f"{x} bulan"
+)
+
+st.divider()
+
+# Prediksi
+if st.button("Prediksi Kemampuan Membeli Mobil", type="primary"):
+
+    try:
+        # Data untuk model regresi
+        regression_input = pd.DataFrame({
+            "price_idr": [car_price],
+            "down_payment": [down_payment],
+            "loan_tenure": [loan_tenure]
+        })
+
+        predicted_installment = float(
+            regression_model.predict(regression_input)[0]
+        )
+
+        # Data untuk model klasifikasi
+        classification_input = pd.DataFrame({
+            "monthly_income": [monthly_income],
+            "price_idr": [car_price],
+            "down_payment": [down_payment],
+            "loan_tenure": [loan_tenure]
+        })
+
+        prediction = classification_model.predict(
+            classification_input
+        )[0]
+
+        dti_ratio = (
+            predicted_installment / monthly_income
+        ) * 100
+
+        st.subheader("Hasil Prediksi")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.metric(
+                "Prediksi Cicilan per Bulan",
+                f"Rp {predicted_installment:,.0f}"
+            )
+
+        with col2:
+            st.metric(
+                "Rasio Cicilan terhadap Penghasilan",
+                f"{dti_ratio:.2f}%"
+            )
+
+        st.divider()
+
+        if prediction == 1:
+            st.success(
+                "Hasil klasifikasi: Berpotensi mampu membeli mobil."
+            )
+        else:
+            st.warning(
+                "Hasil klasifikasi: Belum berpotensi mampu membeli mobil."
+            )
+
+        st.caption(
+            "Catatan: Hasil merupakan prediksi berdasarkan model "
+            "machine learning, bukan keputusan persetujuan kredit "
+            "dari lembaga pembiayaan."
+        )
+
+    except Exception as e:
+        st.error("Terjadi kesalahan saat melakukan prediksi.")
+        st.exception(e)
